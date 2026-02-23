@@ -1,0 +1,67 @@
+name: Build ESP32 firmware (Arduino)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Setup ESP32 core (on runner)
+        run: |
+          arduino-cli config init
+          arduino-cli config set board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      # OPTIONAL: Install libs your sketch uses (add more lines if needed)
+      - name: Install libraries (optional)
+        run: |
+          arduino-cli lib update-index
+          # Examples (uncomment if you use them):
+          # arduino-cli lib install "ArduinoJson"
+          # arduino-cli lib install "Adafruit MPU6050"
+          # arduino-cli lib install "Adafruit Unified Sensor"
+
+      - name: Compile (ESP32 Dev Module)
+        run: |
+          # Find the first .ino (works for most repos)
+          SKETCH=$(find . -maxdepth 3 -name "*.ino" | head -n 1)
+          echo "Sketch found: $SKETCH"
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            --output-dir build \
+            "$SKETCH"
+
+      - name: Create merged single BIN (recommended for easy flashing)
+        run: |
+          # Install esptool on the runner
+          python3 -m pip install --upgrade pip esptool
+
+          # The build folder should contain multiple binaries; merge them into one file.
+          # For classic ESP32, these offsets are standard for Arduino core:
+          # 0x1000 bootloader, 0x8000 partitions, 0x10000 app
+          python3 -m esptool --chip esp32 merge_bin -o build/firmware_merged.bin \
+            0x1000 build/*.bootloader.bin \
+            0x8000 build/*.partitions.bin \
+            0x10000 build/*.bin
+
+          ls -lah build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-firmware
+          path: build/
